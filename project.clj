@@ -9,3 +9,4 @@
                  [cheshire "5.11.0"]
                  [clj-http "3.12.3"]]
   :main calorias.api)
+

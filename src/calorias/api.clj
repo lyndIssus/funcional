@@ -4,6 +4,7 @@
             [compojure.route :as route]
             [cheshire.core :as json]
             [ring.middleware.json :as middleware]
+            [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
             [clj-http.client :as client]))
 
 (defonce dados-usuario (atom nil))
@@ -15,53 +16,63 @@
    :body (json/generate-string corpo)})
 
 (defn calcular-saldo [inicio fim]
-  (let [filtradas (filter #(let [d (:data %)]
-                             (and (>= d inicio) (<= d fim)))
-                          @transacoes)
-        ganho (reduce + (map :calorias (filter #(= (:tipo %) "ganho") filtradas)))
-        perda (reduce + (map :calorias (filter #(= (:tipo %) "perda") filtradas)))]
-    (- ganho perda)))
+ 
+ )
 
-(defn obter-calorias-alimento [nome qtd]
-  ;; Exemplo com API externa (API Ninjas ou similar)
-  (let [resp (client/get "https://api.api-ninjas.com/v1/nutrition"
-                         {:headers {"X-Api-Key" "SUA_CHAVE_API"} ; substitua por sua chave real
-                          :query-params {"query" (str qtd "g " nome)}
-                          :as :json})
-        calorias (get-in resp [:body 0 :calories] 0)]
-    calorias))
+
+(defn obter-calorias-alimento [nome quantidade]
+  (let [url "https://world.openfoodfacts.org/cgi/search.pl"
+        params {:query-params {"search_terms" nome
+                               "search_simple" "1"
+                               "json" "1"
+                               "page_size" "1"}}
+        response (client/get url params)
+        body (json/parse-string (:body response) true)
+        produtos (:products body)
+        alimento (first produtos)
+        calorias-por-100g (get-in alimento [:nutriments :energy-kcal_100g])]
+    (if (and calorias-por-100g quantidade)
+      
+      (* (/ calorias-por-100g 100) quantidade)
+      0)))
+
+
+
 
 (defroutes rotas
   (POST "/usuario" req
-    (let [dados (json/parse-string (slurp (:body req)) true)]
-      (reset! dados-usuario dados)
-      (resposta-json 200 {:mensagem "Dados cadastrados com sucesso."})))
+  (let [dados (:body req)]
+    (reset! dados-usuario dados)
+    (resposta-json 200 {:mensagem "Dados cadastrados com sucesso."})))
 
-  (POST "/consumo" req
-    (let [{:keys [data alimento quantidade]} (json/parse-string (slurp (:body req)) true)
-          calorias (obter-calorias-alimento alimento quantidade)]
-      (swap! transacoes conj {:data data :descricao alimento :quantidade quantidade :calorias calorias :tipo "ganho"})
-      (resposta-json 200 {:mensagem "Consumo registrado." :calorias calorias})))
+  (GET "/usuario" []
+  (if @dados-usuario
+    (resposta-json 200 @dados-usuario)
+    (resposta-json 404 {:erro "Nenhum usuário cadastrado."})))
+
+
+
+(POST "/consumo" req
+  (let [{:keys [data alimento quantidade]} (:body req)
+        calorias (obter-calorias-alimento alimento quantidade)]
+    (swap! transacoes conj {:data data :descricao alimento :quantidade quantidade :calorias calorias :tipo "ganho"})
+    (resposta-json 200 {:mensagem "Consumo registrado." :calorias calorias})))
 
   (POST "/atividade" req
-    (let [{:keys [data atividade minutos]} (json/parse-string (slurp (:body req)) true)
-          calorias (* 10 minutos)]
-      (swap! transacoes conj {:data data :descricao atividade :minutos minutos :calorias calorias :tipo "perda"})
-      (resposta-json 200 {:mensagem "Atividade registrada." :calorias calorias})))
+    )
 
   (GET "/extrato" [inicio fim]
-    (let [res (filter #(let [d (:data %)] (and (>= d inicio) (<= d fim))) @transacoes)]
-      (resposta-json 200 res)))
+    )
 
   (GET "/saldo" [inicio fim]
-    (resposta-json 200 {:saldo (calcular-saldo inicio fim)}))
+    )
 
   (route/not-found "Rota não encontrada"))
 
 (def app
   (-> rotas
-      middleware/wrap-json-body
-      middleware/wrap-json-response))
+      (wrap-json-body {:keywords? true})
+      wrap-json-response))
 
 (defn -main []
   (run-jetty app {:port 3000}))
